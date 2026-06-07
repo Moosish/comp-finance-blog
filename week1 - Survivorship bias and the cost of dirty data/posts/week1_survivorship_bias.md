@@ -329,15 +329,16 @@ All free. All installable via pip.
 
 ## Coming Up: Week 2
 
-Next week we'll move from *what* to *how much*. The topic is **factor
-exposure and style drift** — specifically, how easy it is to build a
-"value" strategy that is actually a disguised momentum strategy, and how
-to detect this before it blows up in a momentum reversal.
+Next week we build the raw material for everything that follows: **feature
+engineering for quantitative signals**. We'll turn price history and
+fundamentals into ML-ready inputs — momentum, mean-reversion, value, and
+carry factors — while being rigorous about look-ahead contamination (a
+subtler cousin of the survivorship problem we tackled here).
 
-We'll use the same clean data-construction discipline developed here, apply
-it to Fama-French factor data, and show how a simple PCA separates genuine
-factor loading from accidental exposure. The goal is to build the diagnostic
-toolkit that every systematic strategy should run before live deployment.
+We'll then use information coefficients to triage the feature set: which
+signals have genuine predictive content, which are noise dressed up as
+structure, and how to tell the difference before you've trained a model on
+them.
 
 ---
 
