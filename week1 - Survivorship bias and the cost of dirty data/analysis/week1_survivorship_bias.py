@@ -32,10 +32,21 @@ import yfinance as yf
 matplotlib.use("Agg")  # headless rendering -- no GUI needed
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# chart_style.py lives at repo root: analysis/ -> week1 folder -> repo root
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import chart_style
+from chart_style import (
+    save_fig, styled_title,
+    C_PRIMARY, C_BLUE, C_AMBER, C_RED, C_VIOLET,
+    TEXT_HIGH, TEXT_LOW, BORDER, BG_CARD,
+)
+
 # -- Reproducibility ------------------------------------------------------------
 SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
+
+chart_style.apply()
 
 # -- Paths ----------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent
@@ -356,70 +367,42 @@ def annual_return_decomposition(
 # Step 5 -- Visualisations
 # ==============================================================================
 
-STYLE_PARAMS = {
-    "figure.facecolor": "white",
-    "axes.facecolor": "white",
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.grid": True,
-    "grid.alpha": 0.35,
-    "grid.linestyle": "--",
-    "font.family": "sans-serif",
-    "font.size": 11,
-}
-
-BIASED_COLOR = "#e05252"     # red -- danger, inflated
-UNBIASED_COLOR = "#4477aa"   # blue -- reference, honest
-GAP_COLOR = "#f7b7a3"        # light red fill for gap region
-
-
-def _apply_style():
-    plt.rcParams.update(STYLE_PARAMS)
-
-
 def fig1_cumulative_returns(
     biased_monthly: pd.Series,
     unbiased_monthly: pd.Series,
 ) -> Path:
     """Log-scale cumulative return chart with annotated market events."""
-    _apply_style()
     fig, ax = plt.subplots(figsize=(12, 5))
 
     common = biased_monthly.index.intersection(unbiased_monthly.index)
     b = (1 + biased_monthly.loc[common]).cumprod()
     u = (1 + unbiased_monthly.loc[common]).cumprod()
 
-    ax.semilogy(b.index, b.values, color=BIASED_COLOR, lw=2, label="Survivors-only (biased)")
-    ax.semilogy(u.index, u.values, color=UNBIASED_COLOR, lw=2, label="^GSPC / Point-in-time (reference)")
+    ax.semilogy(b.index, b.values, color=C_PRIMARY, lw=2, label="Survivors-only (biased)")
+    ax.semilogy(u.index, u.values, color=C_BLUE, lw=2, label="^GSPC / Point-in-time (reference)")
     ax.fill_between(b.index, b.values, u.values, where=b > u,
-                    alpha=0.2, color=GAP_COLOR, label="Survivorship premium")
+                    alpha=0.15, color=C_AMBER, label="Survivorship premium")
 
-    # Annotate key events
     events = {
         "2011-08": "US downgrade",
         "2020-03": "COVID crash",
         "2022-01": "Rate hike cycle",
     }
-    for date_str, label in events.items():
-        ts = pd.Timestamp(date_str)
-        if ts in b.index or True:
-            # Find nearest available date
-            nearest = b.index[b.index.get_indexer([ts], method="nearest")[0]]
-            ax.axvline(nearest, color="grey", lw=1, alpha=0.6, ls=":")
-            ax.text(nearest, ax.get_ylim()[0] * 1.05 if ax.get_ylim()[0] > 0 else 0.5,
-                    label, fontsize=8.5, color="grey", rotation=90,
-                    va="bottom", ha="right")
+    for date_str, event_label in events.items():
+        nearest = b.index[b.index.get_indexer([pd.Timestamp(date_str)], method="nearest")[0]]
+        ax.axvline(nearest, color=BORDER, lw=1, alpha=0.8, ls=":")
+        ax.text(nearest, b.min() * 0.97, event_label,
+                fontsize=8, color=TEXT_LOW, rotation=90, va="top", ha="right")
 
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:.1f}×"))
-    ax.set_title("Cumulative Growth of $1 -- Biased vs. Reference Portfolio", fontsize=13, pad=12)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:.1f}x"))
+    styled_title(ax, "Cumulative Growth of $1", "Biased vs. reference portfolio — log scale")
     ax.set_xlabel("Date")
     ax.set_ylabel("Portfolio value (log scale)")
-    ax.legend(frameon=False)
+    ax.legend()
 
-    fig.tight_layout()
     out = FIGURES_DIR / "fig1_cumulative_returns.png"
-    fig.savefig(out, dpi=150)
+    save_fig(fig, out)
     plt.close(fig)
     print(f"  Saved {out.name}")
     return out
@@ -430,15 +413,15 @@ def fig2_sharpe_comparison(
     metrics_unbiased: dict,
 ) -> Path:
     """Side-by-side bar chart of Sharpe, Calmar, and Max Drawdown."""
-    _apply_style()
     fig, axes = plt.subplots(1, 3, figsize=(13, 5))
-    fig.suptitle("Performance Metrics: Biased vs. Reference Portfolio", fontsize=13)
+    fig.suptitle("Performance Metrics: Biased vs. Reference Portfolio",
+                 fontsize=13, color=TEXT_HIGH, fontweight="bold", x=0.05, ha="left")
     fig.subplots_adjust(top=0.88, wspace=0.35)
 
     metric_specs = [
-        ("Sharpe Ratio", "Sharpe Ratio", "higher is better"),
-        ("Calmar Ratio", "Calmar Ratio", "higher is better"),
-        ("Max Drawdown", "Max Drawdown (%)", "less negative is better"),
+        ("Sharpe Ratio",  "Sharpe Ratio",    "higher is better"),
+        ("Calmar Ratio",  "Calmar Ratio",    "higher is better"),
+        ("Max Drawdown",  "Max Drawdown (%)", "less negative is better"),
     ]
 
     for ax, (key, ylabel, note) in zip(axes, metric_specs):
@@ -451,44 +434,41 @@ def fig2_sharpe_comparison(
         bars = ax.bar(
             ["Biased\n(survivors)", "Reference\n(^GSPC/PIT)"],
             [b_val, u_val],
-            color=[BIASED_COLOR, UNBIASED_COLOR],
+            color=[C_PRIMARY, C_BLUE],
             width=0.45,
-            edgecolor="white",
+            edgecolor=BORDER,
         )
 
-        # Label bars with values — offset direction depends on bar sign
         for bar, val in zip(bars, [b_val, u_val]):
             x_center = bar.get_x() + bar.get_width() / 2
-            label = f"{val:.2f}{'%' if key == 'Max Drawdown' else ''}"
+            bar_label = f"{val:.2f}{'%' if key == 'Max Drawdown' else ''}"
             if val >= 0:
-                ax.text(x_center, val + 0.02, label,
-                        ha="center", va="bottom", fontsize=10, fontweight="bold")
+                ax.text(x_center, val + 0.02, bar_label,
+                        ha="center", va="bottom", fontsize=10,
+                        fontweight="bold", color=TEXT_HIGH)
             else:
-                # Place label below the bar end (more negative), hanging down
-                ax.text(x_center, val - 0.5, label,
-                        ha="center", va="top", fontsize=10, fontweight="bold")
+                ax.text(x_center, val - 0.5, bar_label,
+                        ha="center", va="top", fontsize=10,
+                        fontweight="bold", color=TEXT_HIGH)
 
-        # Label bias pct on Sharpe panel as a plain text label (no arrow, avoids layout issues)
         if key == "Sharpe Ratio" and u_val != 0:
             inflation = (b_val - u_val) / abs(u_val) * 100
             bias_label = f"+{inflation:.0f}% bias" if inflation > 0 else f"{inflation:.0f}% bias"
             ax.text(0.5, 0.95, bias_label, transform=ax.transAxes,
-                    ha="center", va="top", fontsize=9, color=BIASED_COLOR,
-                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=BIASED_COLOR, alpha=0.7))
+                    ha="center", va="top", fontsize=9, color=C_AMBER,
+                    bbox=dict(boxstyle="round,pad=0.2", fc=BG_CARD, ec=C_AMBER, alpha=0.9))
 
         ax.set_ylabel(ylabel, fontsize=10)
-        ax.set_title(f"{key}\n({note})", fontsize=10)
+        ax.set_title(f"{key}\n({note})", fontsize=10, color=TEXT_HIGH)
 
-        lo = min(b_val, u_val)
-        hi = max(b_val, u_val)
+        lo, hi = min(b_val, u_val), max(b_val, u_val)
         if lo < 0 and hi <= 0:
-            # All-negative panel (Max Drawdown): show x-axis at top, expand downward for labels
             ax.set_ylim(lo * 1.35, 2.0)
         else:
             ax.set_ylim(lo * 0.7, hi * 1.25)
 
     out = FIGURES_DIR / "fig2_sharpe_comparison.png"
-    fig.savefig(out, dpi=150)
+    save_fig(fig, out)
     plt.close(fig)
     print(f"  Saved {out.name}")
     return out
@@ -500,37 +480,35 @@ def fig3_rolling_bias(
     rf_annual: float,
 ) -> Path:
     """Rolling 3-year Sharpe for both portfolios with a gap-shaded region."""
-    _apply_style()
     fig, ax = plt.subplots(figsize=(12, 5))
 
     common = biased_monthly.index.intersection(unbiased_monthly.index)
     b_rolling = rolling_sharpe(biased_monthly.loc[common], rf_annual)
     u_rolling = rolling_sharpe(unbiased_monthly.loc[common], rf_annual)
 
-    ax.plot(b_rolling.index, b_rolling.values, color=BIASED_COLOR, lw=2,
+    ax.plot(b_rolling.index, b_rolling.values, color=C_PRIMARY, lw=2,
             label="Survivors-only (biased)")
-    ax.plot(u_rolling.index, u_rolling.values, color=UNBIASED_COLOR, lw=2,
+    ax.plot(u_rolling.index, u_rolling.values, color=C_BLUE, lw=2,
             label="Reference")
     ax.fill_between(
         b_rolling.index,
         b_rolling.values,
         u_rolling.values,
         where=b_rolling > u_rolling,
-        alpha=0.25,
-        color=GAP_COLOR,
+        alpha=0.18,
+        color=C_AMBER,
         label="Bias (biased > reference)",
     )
 
-    ax.axhline(0, color="black", lw=0.8, ls="--", alpha=0.5)
+    ax.axhline(0, color=BORDER, lw=1, ls="--")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-    ax.set_title("Rolling 3-Year Sharpe Ratio -- Survivorship Bias Over Time", fontsize=13, pad=12)
+    styled_title(ax, "Rolling 3-Year Sharpe Ratio", "Survivorship bias over time")
     ax.set_xlabel("Date (end of rolling window)")
     ax.set_ylabel("Rolling Sharpe Ratio")
-    ax.legend(frameon=False)
+    ax.legend()
 
-    fig.tight_layout()
     out = FIGURES_DIR / "fig3_rolling_bias.png"
-    fig.savefig(out, dpi=150)
+    save_fig(fig, out)
     plt.close(fig)
     print(f"  Saved {out.name}")
     return out
@@ -538,35 +516,30 @@ def fig3_rolling_bias(
 
 def fig4_return_decomposition(decomp: pd.DataFrame) -> Path:
     """Stacked bar: annual Sharpe gap decomposed into return inflation vs vol suppression."""
-    _apply_style()
     fig, ax = plt.subplots(figsize=(13, 5))
 
     years = decomp.index.astype(str)
     x = np.arange(len(years))
     width = 0.6
 
-    # Separate positive and negative contributions for correct stacking
     ret_vals = decomp["Return Inflation"].values
     vol_vals = decomp["Vol Suppression"].values
 
-    ax.bar(x, ret_vals, width, label="Return Inflation", color=BIASED_COLOR, alpha=0.85)
-    ax.bar(x, vol_vals, width, bottom=ret_vals, label="Vol Suppression", color="#f5a623", alpha=0.85)
-
-    # Total gap line
-    ax.plot(x, decomp["Total Gap"].values, "o-", color="black", ms=5, lw=1.5,
+    ax.bar(x, ret_vals, width, label="Return Inflation", color=C_RED, alpha=0.85)
+    ax.bar(x, vol_vals, width, bottom=ret_vals, label="Vol Suppression", color=C_AMBER, alpha=0.85)
+    ax.plot(x, decomp["Total Gap"].values, "o-", color=C_VIOLET, ms=5, lw=1.8,
             label="Total Sharpe gap", zorder=5)
 
-    ax.axhline(0, color="black", lw=0.8, ls="--", alpha=0.4)
+    ax.axhline(0, color=BORDER, lw=1, ls="--")
     ax.set_xticks(x)
     ax.set_xticklabels(years, rotation=45, ha="right")
-    ax.set_title("Annual Sharpe Gap Decomposition: Return Inflation vs. Volatility Suppression",
-                 fontsize=12, pad=12)
+    styled_title(ax, "Annual Sharpe Gap Decomposition",
+                 "Return inflation vs. volatility suppression")
     ax.set_ylabel("Sharpe contribution")
-    ax.legend(frameon=False)
+    ax.legend()
 
-    fig.tight_layout()
     out = FIGURES_DIR / "fig4_return_decomposition.png"
-    fig.savefig(out, dpi=150)
+    save_fig(fig, out)
     plt.close(fig)
     print(f"  Saved {out.name}")
     return out
