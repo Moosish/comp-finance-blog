@@ -15,43 +15,27 @@ and flag it clearly. See SIMULATION_MODE flag printed at runtime.
 
 from __future__ import annotations
 
+import json
 import random
-import sys
 import warnings
 from pathlib import Path
 
-import matplotlib
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
 
-matplotlib.use("Agg")  # headless rendering -- no GUI needed
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-# chart_style.py lives at repo root: analysis/ -> week1 folder -> repo root
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-import chart_style
-from chart_style import (
-    save_fig, styled_title,
-    C_PRIMARY, C_BLUE, C_AMBER, C_RED, C_VIOLET,
-    TEXT_HIGH, TEXT_LOW, BORDER, BG_CARD,
-)
 
 # -- Reproducibility ------------------------------------------------------------
 SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 
-chart_style.apply()
-
 # -- Paths ----------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent
-FIGURES_DIR = SCRIPT_DIR / "figures"
-FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR = SCRIPT_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # -- Global parameters ----------------------------------------------------------
 START_DATE = "2010-01-01"
@@ -364,184 +348,76 @@ def annual_return_decomposition(
 
 
 # ==============================================================================
-# Step 5 -- Visualisations
+# Step 5 -- Export data for site rendering
 # ==============================================================================
 
-def fig1_cumulative_returns(
+def export_chart_data(
     biased_monthly: pd.Series,
     unbiased_monthly: pd.Series,
-) -> Path:
-    """Log-scale cumulative return chart with annotated market events."""
-    fig, ax = plt.subplots(figsize=(12, 5))
-
-    common = biased_monthly.index.intersection(unbiased_monthly.index)
-    b = (1 + biased_monthly.loc[common]).cumprod()
-    u = (1 + unbiased_monthly.loc[common]).cumprod()
-
-    ax.semilogy(b.index, b.values, color=C_PRIMARY, lw=2, label="Survivors-only (biased)")
-    ax.semilogy(u.index, u.values, color=C_BLUE, lw=2, label="^GSPC / Point-in-time (reference)")
-    ax.fill_between(b.index, b.values, u.values, where=b > u,
-                    alpha=0.15, color=C_AMBER, label="Survivorship premium")
-
-    events = {
-        "2011-08": "US downgrade",
-        "2020-03": "COVID crash",
-        "2022-01": "Rate hike cycle",
-    }
-    for date_str, event_label in events.items():
-        nearest = b.index[b.index.get_indexer([pd.Timestamp(date_str)], method="nearest")[0]]
-        ax.axvline(nearest, color=BORDER, lw=1, alpha=0.8, ls=":")
-        ax.text(nearest, b.min() * 0.97, event_label,
-                fontsize=8, color=TEXT_LOW, rotation=90, va="top", ha="right")
-
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:.1f}x"))
-    styled_title(ax, "Cumulative Growth of $1", "Biased vs. reference portfolio — log scale")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Portfolio value (log scale)")
-    ax.legend()
-
-    out = FIGURES_DIR / "fig1_cumulative_returns.png"
-    save_fig(fig, out)
-    plt.close(fig)
-    print(f"  Saved {out.name}")
-    return out
-
-
-def fig2_sharpe_comparison(
     metrics_biased: dict,
     metrics_unbiased: dict,
-) -> Path:
-    """Side-by-side bar chart of Sharpe, Calmar, and Max Drawdown."""
-    fig, axes = plt.subplots(1, 3, figsize=(13, 5))
-    fig.suptitle("Performance Metrics: Biased vs. Reference Portfolio",
-                 fontsize=13, color=TEXT_HIGH, fontweight="bold", x=0.05, ha="left")
-    fig.subplots_adjust(top=0.88, wspace=0.35)
-
-    metric_specs = [
-        ("Sharpe Ratio",  "Sharpe Ratio",    "higher is better"),
-        ("Calmar Ratio",  "Calmar Ratio",    "higher is better"),
-        ("Max Drawdown",  "Max Drawdown (%)", "less negative is better"),
-    ]
-
-    for ax, (key, ylabel, note) in zip(axes, metric_specs):
-        b_val = metrics_biased[key]
-        u_val = metrics_unbiased[key]
-
-        if key == "Max Drawdown":
-            b_val, u_val = b_val * 100, u_val * 100
-
-        bars = ax.bar(
-            ["Biased\n(survivors)", "Reference\n(^GSPC/PIT)"],
-            [b_val, u_val],
-            color=[C_PRIMARY, C_BLUE],
-            width=0.45,
-            edgecolor=BORDER,
-        )
-
-        for bar, val in zip(bars, [b_val, u_val]):
-            x_center = bar.get_x() + bar.get_width() / 2
-            bar_label = f"{val:.2f}{'%' if key == 'Max Drawdown' else ''}"
-            if val >= 0:
-                ax.text(x_center, val + 0.02, bar_label,
-                        ha="center", va="bottom", fontsize=10,
-                        fontweight="bold", color=TEXT_HIGH)
-            else:
-                ax.text(x_center, val - 0.5, bar_label,
-                        ha="center", va="top", fontsize=10,
-                        fontweight="bold", color=TEXT_HIGH)
-
-        if key == "Sharpe Ratio" and u_val != 0:
-            inflation = (b_val - u_val) / abs(u_val) * 100
-            bias_label = f"+{inflation:.0f}% bias" if inflation > 0 else f"{inflation:.0f}% bias"
-            ax.text(0.5, 0.95, bias_label, transform=ax.transAxes,
-                    ha="center", va="top", fontsize=9, color=C_AMBER,
-                    bbox=dict(boxstyle="round,pad=0.2", fc=BG_CARD, ec=C_AMBER, alpha=0.9))
-
-        ax.set_ylabel(ylabel, fontsize=10)
-        ax.set_title(f"{key}\n({note})", fontsize=10, color=TEXT_HIGH)
-
-        lo, hi = min(b_val, u_val), max(b_val, u_val)
-        if lo < 0 and hi <= 0:
-            ax.set_ylim(lo * 1.35, 2.0)
-        else:
-            ax.set_ylim(lo * 0.7, hi * 1.25)
-
-    out = FIGURES_DIR / "fig2_sharpe_comparison.png"
-    save_fig(fig, out)
-    plt.close(fig)
-    print(f"  Saved {out.name}")
-    return out
-
-
-def fig3_rolling_bias(
-    biased_monthly: pd.Series,
-    unbiased_monthly: pd.Series,
+    decomp: pd.DataFrame,
     rf_annual: float,
+    simulation_mode: bool,
 ) -> Path:
-    """Rolling 3-year Sharpe for both portfolios with a gap-shaded region."""
-    fig, ax = plt.subplots(figsize=(12, 5))
+    """
+    Write all chart data to a single JSON file consumed by the site renderer.
+    Dates are ISO strings; floats are rounded to 6 dp to keep file size sane.
+    """
+    def _r(v):
+        return round(float(v), 6) if v is not None and not np.isnan(v) else None
 
     common = biased_monthly.index.intersection(unbiased_monthly.index)
-    b_rolling = rolling_sharpe(biased_monthly.loc[common], rf_annual)
-    u_rolling = rolling_sharpe(unbiased_monthly.loc[common], rf_annual)
+    b_cum = (1 + biased_monthly.loc[common]).cumprod()
+    u_cum = (1 + unbiased_monthly.loc[common]).cumprod()
 
-    ax.plot(b_rolling.index, b_rolling.values, color=C_PRIMARY, lw=2,
-            label="Survivors-only (biased)")
-    ax.plot(u_rolling.index, u_rolling.values, color=C_BLUE, lw=2,
-            label="Reference")
-    ax.fill_between(
-        b_rolling.index,
-        b_rolling.values,
-        u_rolling.values,
-        where=b_rolling > u_rolling,
-        alpha=0.18,
-        color=C_AMBER,
-        label="Bias (biased > reference)",
-    )
+    b_roll = rolling_sharpe(biased_monthly.loc[common], rf_annual)
+    u_roll = rolling_sharpe(unbiased_monthly.loc[common], rf_annual)
 
-    ax.axhline(0, color=BORDER, lw=1, ls="--")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-    styled_title(ax, "Rolling 3-Year Sharpe Ratio", "Survivorship bias over time")
-    ax.set_xlabel("Date (end of rolling window)")
-    ax.set_ylabel("Rolling Sharpe Ratio")
-    ax.legend()
+    dates_iso = [d.strftime("%Y-%m-%d") for d in common]
 
-    out = FIGURES_DIR / "fig3_rolling_bias.png"
-    save_fig(fig, out)
-    plt.close(fig)
-    print(f"  Saved {out.name}")
-    return out
+    payload = {
+        "meta": {
+            "simulation_mode": simulation_mode,
+            "rf_annual": _r(rf_annual),
+            "generated": pd.Timestamp.today().strftime("%Y-%m-%dT%H:%M:%S"),
+        },
+        "cumulative_returns": {
+            "dates": dates_iso,
+            "biased": [_r(v) for v in b_cum.values],
+            "reference": [_r(v) for v in u_cum.values],
+        },
+        "monthly_returns": {
+            "dates": dates_iso,
+            "biased": [_r(v) for v in biased_monthly.loc[common].values],
+            "reference": [_r(v) for v in unbiased_monthly.loc[common].values],
+        },
+        "metrics": {
+            "biased": {k: _r(v) for k, v in metrics_biased.items()},
+            "reference": {k: _r(v) for k, v in metrics_unbiased.items()},
+        },
+        "rolling_sharpe": {
+            "dates": dates_iso,
+            "biased": [_r(v) for v in b_roll.values],
+            "reference": [_r(v) for v in u_roll.values],
+        },
+        "decomposition": {
+            "years": decomp.index.astype(str).tolist(),
+            "return_inflation": [_r(v) for v in decomp["Return Inflation"].values],
+            "vol_suppression": [_r(v) for v in decomp["Vol Suppression"].values],
+            "total_gap": [_r(v) for v in decomp["Total Gap"].values],
+        },
+        "events": {
+            "2011-08": "US downgrade",
+            "2020-03": "COVID crash",
+            "2022-01": "Rate hike cycle",
+        },
+    }
 
-
-def fig4_return_decomposition(decomp: pd.DataFrame) -> Path:
-    """Stacked bar: annual Sharpe gap decomposed into return inflation vs vol suppression."""
-    fig, ax = plt.subplots(figsize=(13, 5))
-
-    years = decomp.index.astype(str)
-    x = np.arange(len(years))
-    width = 0.6
-
-    ret_vals = decomp["Return Inflation"].values
-    vol_vals = decomp["Vol Suppression"].values
-
-    ax.bar(x, ret_vals, width, label="Return Inflation", color=C_RED, alpha=0.85)
-    ax.bar(x, vol_vals, width, bottom=ret_vals, label="Vol Suppression", color=C_AMBER, alpha=0.85)
-    ax.plot(x, decomp["Total Gap"].values, "o-", color=C_VIOLET, ms=5, lw=1.8,
-            label="Total Sharpe gap", zorder=5)
-
-    ax.axhline(0, color=BORDER, lw=1, ls="--")
-    ax.set_xticks(x)
-    ax.set_xticklabels(years, rotation=45, ha="right")
-    styled_title(ax, "Annual Sharpe Gap Decomposition",
-                 "Return inflation vs. volatility suppression")
-    ax.set_ylabel("Sharpe contribution")
-    ax.legend()
-
-    out = FIGURES_DIR / "fig4_return_decomposition.png"
-    save_fig(fig, out)
-    plt.close(fig)
-    print(f"  Saved {out.name}")
+    out = DATA_DIR / "week1_chart_data.json"
+    with open(out, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"  Saved {out.name} ({out.stat().st_size // 1024} KB)")
     return out
 
 
@@ -645,12 +521,10 @@ def main() -> None:
     print(f"  Sharpe inflation: {inflation:+.1%}")
     decomp = annual_return_decomposition(biased_monthly, unbiased_monthly)
 
-    # Step 5: Visualisations
-    print("\n[Step 5] Generating figures ...")
-    fig1_cumulative_returns(biased_monthly, unbiased_monthly)
-    fig2_sharpe_comparison(m_biased, m_unbiased)
-    fig3_rolling_bias(biased_monthly, unbiased_monthly, rf)
-    fig4_return_decomposition(decomp)
+    # Step 5: Export data for site rendering
+    print("\n[Step 5] Exporting chart data ...")
+    export_chart_data(biased_monthly, unbiased_monthly, m_biased, m_unbiased,
+                      decomp, rf, simulation_mode)
 
     # -- Summary ------------------------------------------------------------
     print_summary_table(m_biased, m_unbiased, simulation_mode)
